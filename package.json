@@ -4,7 +4,12 @@
   "description": "music utilities",
   "main": "dist/music.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "format": "prettier-standard src/*.js",
+    "lint": "standard src/*.js | snazzy",
+    "build": "rollup -c rollup.config.js",
+    "postbuild": "chmod +x dist/music.js",
+    "version": "npm run build && git add dist/music.js"
   },
   "repository": {
     "type": "git",
@@ -13,7 +18,11 @@
   "author": "",
   "license": "Unlicense",
   "devDependencies": {
+    "esm": "^3.2.25"
   },
   "dependencies": {
+    "logjs": "github:ludlovian/logjs",
+    "spotrip": "github:ludlovian/spotrip",
+    "sade": "^1.7.4"
   }
 }
