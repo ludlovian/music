@@ -1,9 +1,16 @@
 import sade from 'sade'
-import { version } from '../package.json'
 
-import { daemonStatus, daemonStart, daemonStop, queueAlbum } from './spotrip'
-import { checkoutAlbum, publishAlbum } from './moveAlbum'
-import { tagAlbum } from './tag'
+import {
+  daemonStatus,
+  daemonStart,
+  daemonStop,
+  queueAlbum,
+  recordAlbum
+} from './spotrip.mjs'
+import { checkoutAlbum, publishAlbum } from './moveAlbum.mjs'
+import { tagAlbum } from './tag.mjs'
+
+const version = '__VERSION__'
 
 const prog = sade('music')
 
@@ -16,7 +23,7 @@ prog.command('spotweb status').action(daemonStatus)
 prog.command('spotweb start').action(daemonStart)
 prog.command('spotweb stop').action(daemonStop)
 prog.command('queue <uri>').action(queueAlbum)
-// prog.command('spotrip <path>').action(ripAlbum)
+prog.command('spotrip <path>').action(spotripAlbum)
 prog.command('checkout <path>').action(checkoutAlbum)
 prog.command('publish <path>').action(publishAlbum)
 prog.command('tag <path>').action(tagAlbum)
@@ -35,4 +42,9 @@ if (parse) {
 async function tagPublishAlbum (path, options) {
   await tagAlbum(path, options)
   await publishAlbum(path, options)
+}
+
+async function spotripAlbum (path, options) {
+  await recordAlbum(path, options)
+  await tagPublishAlbum(path, options)
 }

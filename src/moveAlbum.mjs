@@ -1,5 +1,5 @@
-import report from './report'
-import { readMetadata, exec } from './util'
+import report from './report.mjs'
+import { readMetadata, exec } from './util.mjs'
 
 const RSYNC_OPTIONS = ['--times', '--recursive', '--omit-dir-times']
 

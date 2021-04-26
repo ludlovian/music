@@ -1,5 +1,5 @@
-import { readMetadata, exists, exec } from './util'
-import report from './report'
+import { readMetadata, exists, exec } from './util.mjs'
+import report from './report.mjs'
 
 export async function tagAlbum (path) {
   const md = await readMetadata(path)

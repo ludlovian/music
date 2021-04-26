@@ -6,7 +6,7 @@ import {
   recordAlbum as recordSpotifyAlbum
 } from 'spotrip'
 
-import report from './report'
+import report from './report.mjs'
 
 export async function daemonStatus () {
   const pid = await spotwebPid()
