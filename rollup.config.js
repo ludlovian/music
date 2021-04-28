@@ -7,9 +7,9 @@ export default {
     'fs/promises',
     'stream/promises',
     'sade',
-    'ms',
+    '@lukeed/ms',
     'slugify',
-    'kleur'
+    'kleur/colors'
   ],
   plugins: [
     resolve({

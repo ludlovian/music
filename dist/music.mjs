@@ -7,7 +7,8 @@ import { stat, writeFile, readFile, rename, unlink } from 'fs/promises';
 import slugify from 'slugify';
 import { createWriteStream } from 'fs';
 import EventEmitter from 'events';
-import ms from 'ms';
+import { format } from '@lukeed/ms';
+import { red, green, yellow, blue, magenta, cyan, grey } from 'kleur/colors';
 import { pipeline } from 'stream/promises';
 import { Transform } from 'stream';
 
@@ -161,35 +162,6 @@ async function getAlbumArt (uri, destFile) {
   await streamFinished(fileStream);
 }
 
-let FORCE_COLOR, NODE_DISABLE_COLORS, NO_COLOR, TERM, isTTY=true;
-if (typeof process !== 'undefined') {
-	({ FORCE_COLOR, NODE_DISABLE_COLORS, NO_COLOR, TERM } = process.env);
-	isTTY = process.stdout && process.stdout.isTTY;
-}
-
-const $ = {
-	enabled: !NODE_DISABLE_COLORS && NO_COLOR == null && TERM !== 'dumb' && (
-		FORCE_COLOR != null && FORCE_COLOR !== '0' || isTTY
-	)
-};
-
-function init(x, y) {
-	let rgx = new RegExp(`\\x1b\\[${y}m`, 'g');
-	let open = `\x1b[${x}m`, close = `\x1b[${y}m`;
-
-	return function (txt) {
-		if (!$.enabled || txt == null) return txt;
-		return open + (!!~(''+txt).indexOf(close) ? txt.replace(rgx, close + open) : txt) + close;
-	};
-}
-const red = init(31, 39);
-const green = init(32, 39);
-const yellow = init(33, 39);
-const blue = init(34, 39);
-const magenta = init(35, 39);
-const cyan = init(36, 39);
-const grey = init(90, 39);
-
 const CSI = '\u001B[';
 const CR = '\r';
 const EOL = `${CSI}0K`;
@@ -273,7 +245,7 @@ reporter$1
     log.status('... ');
   })
   .on('spotrip.track.record.update', ({ percent, taken, eta }) =>
-    log.status(`- ${percent}%  in ${ms(taken)}  eta ${ms(eta)}`)
+    log.status(`- ${percent}%  in ${format(taken)}  eta ${format(eta)}`)
   )
   .on('spotrip.track.record.done', ({ total, speed }) => {
     log.prefix += log.green(
