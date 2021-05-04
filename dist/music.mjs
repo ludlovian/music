@@ -792,7 +792,7 @@ function getTags (obj) {
     .map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(', ') : v}`)
 }
 
-const version = '1.0.1';
+const version = '1.0.2';
 
 const prog = sade('music');
 
