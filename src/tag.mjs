@@ -1,4 +1,7 @@
-import { readMetadata, exists, exec } from './util.mjs'
+import exec from 'pixutil/exec'
+import exists from 'pixutil/exists'
+
+import { readMetadata } from './util.mjs'
 import report from './report.mjs'
 
 export async function tagAlbum (path) {

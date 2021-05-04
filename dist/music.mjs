@@ -2,13 +2,13 @@
 import sade from 'sade';
 import http from 'http';
 import { execFile, spawn } from 'child_process';
-import { promisify } from 'util';
+import { promisify, format } from 'util';
 import { stat, writeFile, readFile, rename, unlink } from 'fs/promises';
 import slugify from 'slugify';
 import { createWriteStream } from 'fs';
 import EventEmitter from 'events';
-import { format } from '@lukeed/ms';
-import { red, green, yellow, blue, magenta, cyan, grey } from 'kleur/colors';
+import { format as format$1 } from '@lukeed/ms';
+import { cyan, green, yellow, blue, magenta, red } from 'kleur/colors';
 import { pipeline } from 'stream/promises';
 import { Transform } from 'stream';
 
@@ -162,73 +162,81 @@ async function getAlbumArt (uri, destFile) {
   await streamFinished(fileStream);
 }
 
-const CSI = '\u001B[';
-const CR = '\r';
-const EOL = `${CSI}0K`;
+const colourFuncs = { cyan, green, yellow, blue, magenta, red };
+const colours = Object.keys(colourFuncs);
+const CLEAR_LINE = '\r\x1b[0K';
 const RE_DECOLOR = /(^|[^\x1b]*)((?:\x1b\[\d*m)|$)/g; // eslint-disable-line no-control-regex
 
-function log (string, { newline = true, limitWidth } = {}) {
-  if (log.prefix) {
-    string = log.prefix + string;
-  }
-  if (limitWidth && log.width) {
-    string = truncateToWidth(string, log.width);
-  }
-  const start = log.dirty ? CR + EOL : '';
-  const end = newline ? '\n' : '';
+const state = {
+  dirty: false,
+  width: process.stdout && process.stdout.columns,
+  level: process.env.LOGLEVEL,
+  write: process.stdout.write.bind(process.stdout)
+};
 
-  log.dirty = newline ? false : !!string;
+process.stdout &&
+  process.stdout.on('resize', () => (state.width = process.stdout.columns));
 
-  log.write(start + string + end);
+function _log (
+  args,
+  { newline = true, limitWidth, prefix = '', level, colour }
+) {
+  if (level && (!state.level || state.level < level)) return
+  const msg = format(...args);
+  let string = prefix + msg;
+  if (colour && colour in colourFuncs) string = colourFuncs[colour](string);
+  if (limitWidth) string = truncate(string, state.width);
+  if (newline) string = string + '\n';
+  if (state.dirty) string = CLEAR_LINE + string;
+  state.dirty = !newline && !!msg;
+  state.write(string);
 }
 
-Object.assign(log, {
-  write: process.stdout.write.bind(process.stdout),
-
-  status: string =>
-    log(string, {
-      newline: false,
-      limitWidth: true
-    }),
-
-  prefix: '',
-
-  width: process.stdout.columns,
-
-  red,
-  green,
-  yellow,
-  blue,
-  magenta,
-  cyan,
-  grey
-});
-
-process.stdout.on('resize', () => {
-  log.width = process.stdout.columns;
-});
-
-function truncateToWidth (string, width) {
-  const maxLength = width - 2; // leave two chars at end
-  if (string.length <= maxLength) return string
+function truncate (string, max) {
+  max -= 2; // leave two chars at end
+  if (string.length <= max) return string
   const parts = [];
-  let w = 0;
-  let full;
-  for (const match of string.matchAll(RE_DECOLOR)) {
-    const [, text, ansiCode] = match;
-    if (full) {
-      parts.push(ansiCode);
-      continue
-    } else if (w + text.length <= maxLength) {
-      parts.push(text, ansiCode);
-      w += text.length;
-    } else {
-      parts.push(text.slice(0, maxLength - w), ansiCode);
-      full = true;
-    }
-  }
+  let w = 0
+  ;[...string.matchAll(RE_DECOLOR)].forEach(([, txt, clr]) => {
+    parts.push(txt.slice(0, max - w), clr);
+    w = Math.min(w + txt.length, max);
+  });
   return parts.join('')
 }
+
+function merge (old, new_) {
+  const prefix = (old.prefix || '') + (new_.prefix || '');
+  return { ...old, ...new_, prefix }
+}
+
+function logger (options) {
+  return Object.defineProperties((...args) => _log(args, options), {
+    _preset: { value: options, configurable: true },
+    _state: { value: state, configurable: true },
+    name: { value: 'log', configurable: true }
+  })
+}
+
+function nextColour () {
+  const clr = colours.shift();
+  colours.push(clr);
+  return clr
+}
+
+function fixup (log) {
+  const p = log._preset;
+  Object.assign(log, {
+    status: logger(merge(p, { newline: false, limitWidth: true })),
+    level: level => fixup(logger(merge(p, { level }))),
+    colour: colour =>
+      fixup(logger(merge(p, { colour: colour || nextColour() }))),
+    prefix: prefix => fixup(logger(merge(p, { prefix }))),
+    ...colourFuncs
+  });
+  return log
+}
+
+const log = fixup(logger({}));
 
 const reporter$1 = new EventEmitter();
 const report$1 = reporter$1.emit.bind(reporter$1);
@@ -245,7 +253,7 @@ reporter$1
     log.status('... ');
   })
   .on('spotrip.track.record.update', ({ percent, taken, eta }) =>
-    log.status(`- ${percent}%  in ${format(taken)}  eta ${format(eta)}`)
+    log.status(`- ${percent}%  in ${format$1(taken)}  eta ${format$1(eta)}`)
   )
   .on('spotrip.track.record.done', ({ total, speed }) => {
     log.prefix += log.green(
@@ -659,16 +667,6 @@ async function recordAlbum (path) {
 
 const exec = promisify(execFile);
 
-async function exists (path) {
-  try {
-    await stat(path);
-    return true
-  } catch (err) {
-    if (err.code === 'ENOENT') return false
-    throw err
-  }
-}
-
 async function readMetadata (path) {
   return JSON.parse(await readFile(`${path}/metadata.json`, 'utf8'))
 }
@@ -703,6 +701,16 @@ async function publishAlbum (path, { store: storePath }) {
   await exec('rm', ['-rf', path]);
 
   report('publish.album.done', destPath);
+}
+
+async function exists (file) {
+  try {
+    await stat(file);
+    return true
+  } catch (err) {
+    if (err.code === 'ENOENT') return false
+    throw err
+  }
 }
 
 async function tagAlbum (path) {

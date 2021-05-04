@@ -1,5 +1,7 @@
+import exec from 'pixutil/exec'
+
 import report from './report.mjs'
-import { readMetadata, exec } from './util.mjs'
+import { readMetadata } from './util.mjs'
 
 const RSYNC_OPTIONS = ['--times', '--recursive', '--omit-dir-times']
 
