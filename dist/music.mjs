@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import sade from 'sade';
+import { spawn as spawn$1, execFile } from 'child_process';
 import http from 'http';
-import { execFile, spawn } from 'child_process';
 import { promisify, format } from 'util';
 import { stat, writeFile, readFile, rename, unlink } from 'fs/promises';
 import slugify from 'slugify';
@@ -11,6 +11,20 @@ import { format as format$1 } from '@lukeed/ms';
 import { cyan, green, yellow, blue, magenta, red } from 'kleur/colors';
 import { pipeline } from 'stream/promises';
 import { Transform } from 'stream';
+
+function spawn (...args) {
+  const child = spawn$1(...args);
+  child.done = new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.on('exit', (code, signal) => {
+      /* c8 ignore next */
+      if (signal) return reject(new Error(`Signal: ${signal}`))
+      if (code) return reject(new Error(`Bad code: ${code}`))
+      resolve();
+    });
+  });
+  return child
+}
 
 const URI_PATTERN = /^[a-zA-Z0-9]{22}$/;
 
@@ -68,7 +82,7 @@ async function daemonPid ({ port = DAEMON_PORT } = {}) {
 
 async function daemonStart$1 ({ cmd = DAEMON_COMMAND } = {}) {
   const [file, ...args] = cmd.split(' ');
-  spawn(file, args, { detached: true, stdio: 'ignore' }).unref();
+  spawn$1(file, args, { detached: true, stdio: 'ignore' }).unref();
 }
 
 async function daemonStop$1 ({ port = DAEMON_PORT } = {}) {
@@ -301,7 +315,7 @@ async function queueAlbum$1 (
   await writeFile(mdFile, JSON.stringify(metadata, null, 2));
 
   await Promise.all([
-    processEnded(spawn('vi', [mdFile], { stdio: 'inherit' })),
+    processEnded(spawn$1('vi', [mdFile], { stdio: 'inherit' })),
     getAlbumArt(metadata.tracks[0].trackUri, jpgFile)
   ]);
 
@@ -530,7 +544,7 @@ async function recordTrack ({ report = report$1, uri, file }) {
 
   report('spotrip.track.convert.start');
   await processEnded(
-    spawn('flac', [...FLAC_OPTIONS, `--output-name=${file}`, pcmFile])
+    spawn$1('flac', [...FLAC_OPTIONS, `--output-name=${file}`, pcmFile])
   );
   await unlink(pcmFile);
   report('spotrip.track.convert.done');
@@ -810,15 +824,15 @@ prog.command('checkout <path>').action(checkoutAlbum);
 prog.command('publish <path>').action(publishAlbum);
 prog.command('tag <path>').action(tagAlbum);
 prog.command('tag publish <path>').action(tagPublishAlbum);
+prog.command('backup').action(backup);
+prog.command('backup mp3').action(backupMp3);
 
-const parse = prog.parse(process.argv, { lazy: true });
-if (parse) {
-  const { handler, args } = parse;
-  handler.apply(null, args).catch(err => {
-    console.error('An unexpected error occured');
-    console.error(err);
-    process.exit(1);
-  });
+const p = prog.parse(process.argv, { lazy: true });
+if (p) p.handler(...p.args).catch(handleError);
+
+function handleError (err) {
+  console.error(err);
+  process.exit(1);
 }
 
 async function tagPublishAlbum (path, options) {
@@ -829,4 +843,34 @@ async function tagPublishAlbum (path, options) {
 async function spotripAlbum (path, options) {
   await recordAlbum(path);
   await tagPublishAlbum(path, options);
+}
+
+function backup (opts) {
+  return spawn(
+    'node',
+    [
+      '/home/alan/bin/s3cli',
+      'sync',
+      '/nas/data/media/music/albums/Classical',
+      's3://backup-media-readersludlow/Classical',
+      '-d',
+      ...(opts._ || [])
+    ],
+    { stdio: 'inherit' }
+  ).done.catch(handleError)
+}
+
+function backupMp3 (opts) {
+  return spawn(
+    'node',
+    [
+      '/home/alan/bin/s3cli',
+      'sync',
+      '/nas/data/media/music/mp3',
+      's3://media-readersludlow/public/mp3',
+      '-d',
+      ...(opts._ || [])
+    ],
+    { stdio: 'inherit' }
+  ).done.catch(handleError)
 }
