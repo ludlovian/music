@@ -3,7 +3,7 @@ import exec from 'pixutil/exec'
 import report from './report.mjs'
 import { readMetadata } from './util.mjs'
 
-const RSYNC_OPTIONS = ['--times', '--recursive', '--omit-dir-times']
+const RSYNC_OPTIONS = ['--times', '--recursive', '--omit-dir-times', '--delete']
 
 export async function checkoutAlbum (path, { work: workPath }) {
   if (path.startsWith(workPath)) return path

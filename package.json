@@ -6,8 +6,8 @@
   "source": "src/index.mjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "format": "prettier-standard src/*.mjs",
-    "lint": "standard src/*.mjs | snazzy",
+    "format": "prettier-standard {src,scripts}/*.mjs",
+    "lint": "standard {src,scripts}/*.mjs | snazzy",
     "build": "rollup -c rollup.config.js",
     "postbuild": "chmod +x dist/music.mjs",
     "version": "npm run build && git add dist/music.mjs"
@@ -21,12 +21,13 @@
   "devDependencies": {
     "@rollup/plugin-node-resolve": "^11.2.1",
     "@rollup/plugin-replace": "^2.4.2",
-    "filescan": "github:ludlovian/filescan"
+    "filescan": "github:ludlovian/filescan",
+    "sortby": "github:ludlovian/sortby"
   },
   "dependencies": {
-    "logjs": "github:ludlovian/logjs#semver:^1.2.1",
-    "pixutil": "github:ludlovian/pixutil#semver:^1.1.0",
+    "logjs": "http://data2.local:8080/logjs/tarball/logjs.tar.gz",
+    "pixutil": "http://data2.local:8080/pixutil/tarball/pixutil.tar.gz",
     "sade": "^1.7.4",
-    "spotrip": "github:ludlovian/spotrip#semver:^2.1.2"
+    "spotrip": "http://data2.local:8080/spotrip/tarball/spotrip.tar.gz"
   }
 }

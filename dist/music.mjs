@@ -3,14 +3,12 @@ import sade from 'sade';
 import { spawn as spawn$1, execFile } from 'child_process';
 import http from 'http';
 import { promisify, format } from 'util';
-import { stat, writeFile, readFile, rename, unlink } from 'fs/promises';
+import { writeFile, readFile, rename, unlink, stat } from 'fs/promises';
 import slugify from 'slugify';
 import { createWriteStream } from 'fs';
+import { pipeline } from 'stream/promises';
 import EventEmitter from 'events';
 import { format as format$1 } from '@lukeed/ms';
-import { cyan, green, yellow, blue, magenta, red } from 'kleur/colors';
-import { pipeline } from 'stream/promises';
-import { Transform } from 'stream';
 
 function spawn (...args) {
   const child = spawn$1(...args);
@@ -26,52 +24,14 @@ function spawn (...args) {
   return child
 }
 
-const URI_PATTERN = /^[a-zA-Z0-9]{22}$/;
-
-const exec$1 = promisify(execFile);
-
-function processEnded (proc) {
-  return new Promise((resolve, reject) => {
-    proc.once('error', reject);
-    proc.on('exit', (code, signal) => {
-      if (signal) return reject(new Error(`Signal: ${signal}`))
-      if (code) return reject(new Error(`Bad code: ${code}`))
-      resolve();
-    });
-  })
-}
-
-function streamFinished (stream) {
-  return new Promise((resolve, reject) => {
-    stream.once('error', reject);
-    stream.on('finish', resolve);
-  })
-}
-
-function normalizeUri (uri, prefix) {
-  const coreUri = uri.replace(/.*[:/]/, '').replace(/\?.*$/, '');
-  if (!URI_PATTERN.test(coreUri)) {
-    throw new Error(`Bad URI: ${uri}`)
-  }
-  return `spotify:${prefix}:${coreUri}`
-}
-
-async function exists$1 (path) {
-  try {
-    await stat(path);
-    return true
-  } catch (err) {
-    if (err.code === 'ENOENT') return false
-    throw err
-  }
-}
+const exec = promisify(execFile);
 
 const DAEMON_PORT = 39705;
 const DAEMON_COMMAND = '/home/alan/dev/spotweb/start';
 const WORK_DIRECTORY = '/home/alan/music';
 
 async function daemonPid ({ port = DAEMON_PORT } = {}) {
-  return exec$1('fuser', [`${port}/tcp`]).then(
+  return exec('fuser', [`${port}/tcp`]).then(
     ({ stdout }) => stdout.trim().split('/')[0],
     err => {
       if (err.code) return ''
@@ -87,7 +47,7 @@ async function daemonStart$1 ({ cmd = DAEMON_COMMAND } = {}) {
 
 async function daemonStop$1 ({ port = DAEMON_PORT } = {}) {
   const pid = await daemonPid({ port });
-  if (pid) await exec$1('kill', [pid]);
+  if (pid) await exec('kill', [pid]);
 }
 
 async function getAlbumMetadata (uri) {
@@ -116,24 +76,37 @@ async function getData (opts) {
   return JSON.parse(data)
 }
 
-function getResponse ({ path, port = DAEMON_PORT } = {}) {
-  return new Promise((resolve, reject) => {
-    http
-      .get(`http://localhost:${port}${path}`, resolve)
-      .once('error', reject)
-      .end();
-  }).then(
-    res => {
-      if (res.statusCode !== 200) {
-        throw new Error(`${res.statusCode} - ${res.statusMessage}`)
-      }
-      return res
-    },
-    err => {
-      if (err.code === 'ECONNREFUSED') throw new Error('Spotweb not running')
-      throw err
-    }
-  )
+async function getResponse ({ path, port = DAEMON_PORT } = {}) {
+  try {
+    const p = new Promise((resolve, reject) => {
+      console.log(`http://localhost:${port}${path}`);
+      const req = http.get(
+        `http://localhost:${port}${path}`,
+        { family: 4 },
+        resolve
+      );
+      req.once('error', reject).end();
+    });
+    const response = await p;
+    const { statusCode: code, statusMessage: msg } = response;
+    console.log({ code, msg });
+    if (code !== 200) throw Object.assign(new Error(msg), { response })
+    return response
+  } catch (err) {
+    console.log(err);
+    if (err.code === 'ECONNREFUSED') throw new Error('Spotweb not running')
+    throw err
+  }
+}
+
+const URI_PATTERN = /^[a-zA-Z0-9]{22}$/;
+
+function normalizeUri (uri, prefix) {
+  const coreUri = uri.replace(/.*[:/]/, '').replace(/\?.*$/, '');
+  if (!URI_PATTERN.test(coreUri)) {
+    throw new Error(`Bad URI: ${uri}`)
+  }
+  return `spotify:${prefix}:${coreUri}`
 }
 
 const SONOS_PLAYER = '192.168.86.210';
@@ -158,33 +131,88 @@ function albumArtUri (
 }
 
 async function getAlbumArt (uri, destFile) {
-  const coverData = await new Promise((resolve, reject) =>
-    http
-      .get(albumArtUri(uri), resolve)
-      .once('error', reject)
-      .end()
-  ).then(res => {
-    if (res.statusCode !== 200) {
-      throw new Error(`${res.statusCode} - ${res.statusMessage}`)
-    }
-    return res
+  const res = await new Promise((resolve, reject) => {
+    const req = http.get(albumArtUri(uri), resolve);
+    req.once('error', reject).end();
   });
 
-  const fileStream = createWriteStream(destFile);
-  coverData.once('error', err => fileStream.emit('error', err)).pipe(fileStream);
+  if (res.statusCode !== 200) {
+    throw new Error(`${res.statusCode} - ${res.statusMessage}`)
+  }
 
-  await streamFinished(fileStream);
+  await pipeline(res, createWriteStream(destFile));
 }
 
-const colourFuncs = { cyan, green, yellow, blue, magenta, red };
-const colours = Object.keys(colourFuncs);
+const allColours = (
+  '20,21,26,27,32,33,38,39,40,41,42,43,44,45,56,57,62,63,68,69,74,75,76,' +
+  '77,78,79,80,81,92,93,98,99,112,113,128,129,134,135,148,149,160,161,' +
+  '162,163,164,165,166,167,168,169,170,171,172,173,178,179,184,185,196,' +
+  '197,198,199,200,201,202,203,204,205,206,207,208,209,214,215,220,221'
+)
+  .split(',')
+  .map(x => parseInt(x, 10));
+
+const painters = [];
+
+function makePainter (n) {
+  const CSI = '\x1b[';
+  const set = CSI + (n < 8 ? n + 30 + ';22' : '38;5;' + n + ';1') + 'm';
+  const reset = CSI + '39;22m';
+  return s => {
+    if (!s.includes(CSI)) return set + s + reset
+    return removeExcess(set + s.replaceAll(reset, reset + set) + reset)
+  }
+}
+
+function painter (n) {
+  if (painters[n]) return painters[n]
+  painters[n] = makePainter(n);
+  return painters[n]
+}
+
+// eslint-disable-next-line no-control-regex
+const rgxDecolour = /(^|[^\x1b]*)((?:\x1b\[[0-9;]+m)|$)/g;
+function truncate (string, max) {
+  max -= 2; // leave two chars at end
+  if (string.length <= max) return string
+  const parts = [];
+  let w = 0;
+  for (const [, txt, clr] of string.matchAll(rgxDecolour)) {
+    parts.push(txt.slice(0, max - w), clr);
+    w = Math.min(w + txt.length, max);
+  }
+  return removeExcess(parts.join(''))
+}
+
+// eslint-disable-next-line no-control-regex
+const rgxSerialColours = /(?:\x1b\[[0-9;]+m)+(\x1b\[[0-9;]+m)/g;
+function removeExcess (string) {
+  return string.replaceAll(rgxSerialColours, '$1')
+}
+
+function randomColour () {
+  const n = Math.floor(Math.random() * allColours.length);
+  return allColours[n]
+}
+
+const colours = {
+  black: 0,
+  red: 1,
+  green: 2,
+  yellow: 3,
+  blue: 4,
+  magenta: 5,
+  cyan: 6,
+  white: 7
+};
+
 const CLEAR_LINE = '\r\x1b[0K';
-const RE_DECOLOR = /(^|[^\x1b]*)((?:\x1b\[\d*m)|$)/g; // eslint-disable-line no-control-regex
 
 const state = {
   dirty: false,
   width: process.stdout && process.stdout.columns,
-  level: process.env.LOGLEVEL,
+  /* c8 ignore next */
+  level: process.env.LOGLEVEL ? parseInt(process.env.LOGLEVEL, 10) : undefined,
   write: process.stdout.write.bind(process.stdout)
 };
 
@@ -198,7 +226,7 @@ function _log (
   if (level && (!state.level || state.level < level)) return
   const msg = format(...args);
   let string = prefix + msg;
-  if (colour && colour in colourFuncs) string = colourFuncs[colour](string);
+  if (colour != null) string = painter(colour)(string);
   if (limitWidth) string = truncate(string, state.width);
   if (newline) string = string + '\n';
   if (state.dirty) string = CLEAR_LINE + string;
@@ -206,54 +234,46 @@ function _log (
   state.write(string);
 }
 
-function truncate (string, max) {
-  max -= 2; // leave two chars at end
-  if (string.length <= max) return string
-  const parts = [];
-  let w = 0
-  ;[...string.matchAll(RE_DECOLOR)].forEach(([, txt, clr]) => {
-    parts.push(txt.slice(0, max - w), clr);
-    w = Math.min(w + txt.length, max);
-  });
-  return parts.join('')
-}
+function makeLogger (base, changes = {}) {
+  const baseOptions = base ? base._preset : {};
+  const options = {
+    ...baseOptions,
+    ...changes,
+    prefix: (baseOptions.prefix || '') + (changes.prefix || '')
+  };
+  const configurable = true;
+  const fn = (...args) => _log(args, options);
+  const addLevel = level => makeLogger(fn, { level });
+  const addColour = c =>
+    makeLogger(fn, { colour: c in colours ? colours[c] : randomColour() });
+  const addPrefix = prefix => makeLogger(fn, { prefix });
+  const status = () => makeLogger(fn, { newline: false, limitWidth: true });
 
-function merge (old, new_) {
-  const prefix = (old.prefix || '') + (new_.prefix || '');
-  return { ...old, ...new_, prefix }
-}
+  const colourFuncs = Object.fromEntries(
+    Object.entries(colours).map(([name, n]) => [
+      name,
+      { value: painter(n), configurable }
+    ])
+  );
 
-function logger (options) {
-  return Object.defineProperties((...args) => _log(args, options), {
-    _preset: { value: options, configurable: true },
-    _state: { value: state, configurable: true },
-    name: { value: 'log', configurable: true }
+  return Object.defineProperties(fn, {
+    _preset: { value: options, configurable },
+    _state: { value: state, configurable },
+    name: { value: 'log', configurable },
+    level: { value: addLevel, configurable },
+    colour: { value: addColour, configurable },
+    prefix: { value: addPrefix, configurable },
+    status: { get: status, configurable },
+    ...colourFuncs
   })
 }
 
-function nextColour () {
-  const clr = colours.shift();
-  colours.push(clr);
-  return clr
-}
-
-function fixup (log) {
-  const p = log._preset;
-  Object.assign(log, {
-    status: logger(merge(p, { newline: false, limitWidth: true })),
-    level: level => fixup(logger(merge(p, { level }))),
-    colour: colour =>
-      fixup(logger(merge(p, { colour: colour || nextColour() }))),
-    prefix: prefix => fixup(logger(merge(p, { prefix }))),
-    ...colourFuncs
-  });
-  return log
-}
-
-const log = fixup(logger({}));
+const log = makeLogger();
 
 const reporter$1 = new EventEmitter();
 const report$1 = reporter$1.emit.bind(reporter$1);
+
+let prefix;
 
 reporter$1
   .on('spotrip.queue.start', uri => log(`Queue ${log.green(uri)}`))
@@ -263,22 +283,31 @@ reporter$1
   })
   .on('spotrip.track.record.start', file => {
     const name = file.replace(/.*\//, '');
-    log.prefix = `${log.green(name)} `;
-    log.status('... ');
+    prefix = log.green(name);
+    log.status(prefix + ' ... ');
   })
   .on('spotrip.track.record.update', ({ percent, taken, eta }) =>
-    log.status(`- ${percent}%  in ${format$1(taken)}  eta ${format$1(eta)}`)
+    log.status(
+      [
+        prefix,
+        `- ${percent}% `,
+        `in ${format$1(taken)} `,
+        `eta ${format$1(eta)}`
+      ].join(' ')
+    )
   )
   .on('spotrip.track.record.done', ({ total, speed }) => {
-    log.prefix += log.green(
-      `- ${fmtDuration(total * 1e3)}  at ${speed.toFixed(1)}x`
+    prefix += log.green(
+      ` - ${fmtDuration(total * 1e3)}  at ${speed.toFixed(1)}x`
     );
-    log.status('');
+    log.status(prefix);
   })
-  .on('spotrip.track.convert.start', () => log.status(' ... converting'))
+  .on('spotrip.track.convert.start', () =>
+    log.status(prefix + ' ... converting')
+  )
   .on('spotrip.track.convert.done', () => {
-    log('');
-    log.prefix = '';
+    log(prefix);
+    prefix = '';
   })
   .on('spotrip.album.record.start', md => {
     log(`Recording ${log.cyan(md.album)}`);
@@ -315,7 +344,7 @@ async function queueAlbum$1 (
   await writeFile(mdFile, JSON.stringify(metadata, null, 2));
 
   await Promise.all([
-    processEnded(spawn$1('vi', [mdFile], { stdio: 'inherit' })),
+    spawn('vi', [mdFile], { stdio: 'inherit' }).done,
     getAlbumArt(metadata.tracks[0].trackUri, jpgFile)
   ]);
 
@@ -325,7 +354,7 @@ async function queueAlbum$1 (
 
   // create work directory
   const destDir = `${workDir}/work/${jobName}`;
-  await exec$1('mkdir', ['-p', destDir]);
+  await exec('mkdir', ['-p', destDir]);
   await rename(mdFile, `${destDir}/metadata.json`);
   await rename(jpgFile, `${destDir}/cover.jpg`);
 
@@ -401,95 +430,70 @@ function uniq (list) {
   return [...new Set(list)]
 }
 
-class Speedo {
-  // Units:
-  //  curr / total - things
-  //  rate - things per second
-  //  eta / taken - ms
-  constructor ({ window = 10 } = {}) {
-    this.windowSize = window;
-    this.start = Date.now();
-    this.readings = [[this.start, 0]];
+function speedo ({
+  total,
+  interval = 250,
+  windowSize = 40
+} = {}) {
+  let readings;
+  let start;
+  return Object.assign(transform, { current: 0, total, update, done: false })
+
+  async function * transform (source) {
+    start = Date.now();
+    readings = [[start, 0]];
+    const int = setInterval(update, interval);
+    try {
+      for await (const chunk of source) {
+        transform.current += chunk.length;
+        yield chunk;
+      }
+      transform.total = transform.current;
+      update(true);
+    } finally {
+      clearInterval(int);
+    }
   }
 
-  update (data) {
-    if (typeof data === 'number') data = { current: data };
-    const { current, total } = data;
-    if (total) this.total = total;
-    this.readings = [...this.readings, [Date.now(), current]].slice(
-      -this.windowSize
-    );
-    this.current = current;
-  }
-
-  get done () {
-    return this.total && this.current >= this.total
-  }
-
-  rate () {
-    if (this.readings.length < 2) return 0
-    if (this.done) return (this.current * 1e3) / this.taken()
-    const last = this.readings[this.readings.length - 1];
-    const first = this.readings[0];
-    return ((last[1] - first[1]) * 1e3) / (last[0] - first[0])
-  }
-
-  percent () {
-    if (!this.total) return null
-    return this.done ? 100 : Math.round((100 * this.current) / this.total)
-  }
-
-  eta () {
-    if (!this.total || this.done) return 0
-    const rate = this.rate();
-    /* c8 ignore next */
-    if (!rate) return 0
-    return (1e3 * (this.total - this.current)) / rate
-  }
-
-  taken () {
-    return this.readings[this.readings.length - 1][0] - this.start
+  function update (done = false) {
+    if (transform.done) return
+    const { current, total } = transform;
+    const now = Date.now();
+    const taken = now - start;
+    readings = [...readings, [now, current]].slice(-windowSize);
+    const first = readings[0];
+    const wl = current - first[1];
+    const wt = now - first[0];
+    const rate = 1e3 * (done ? total / taken : wl / wt);
+    const percent = Math.round((100 * current) / total);
+    const eta = done || !total ? 0 : (1e3 * (total - current)) / rate;
+    Object.assign(transform, { done, taken, rate, percent, eta });
   }
 }
 
-function progress (opts = {}) {
-  const { onProgress, progressInterval, ...rest } = opts;
-  let interval;
-  let bytes = 0;
-  let done = false;
-  let error;
-
-  const ts = new Transform({
-    transform (chunk, encoding, cb) {
-      bytes += chunk.length;
-      cb(null, chunk);
-    },
-    flush (cb) {
-      if (interval) clearInterval(interval);
+function progressStream ({
+  onProgress,
+  interval = 1000,
+  ...rest
+} = {}) {
+  return async function * transform (source) {
+    const int = setInterval(report, interval);
+    let bytes = 0;
+    let done = false;
+    try {
+      for await (const chunk of source) {
+        bytes += chunk.length;
+        yield chunk;
+      }
       done = true;
-      reportProgress();
-      cb(error);
+      report();
+    } finally {
+      clearInterval(int);
     }
-  });
 
-  if (progressInterval) {
-    interval = setInterval(reportProgress, progressInterval);
-  }
-  if (typeof onProgress === 'function') {
-    ts.on('progress', onProgress);
-  }
-
-  ts.on('pipe', src =>
-    src.on('error', err => {
-      error = error || err;
-      ts.emit('error', err);
-    })
-  );
-
-  return ts
-
-  function reportProgress () {
-    if (!error) ts.emit('progress', { bytes, done, ...rest });
+    function report () {
+      onProgress && onProgress({ bytes, done, ...rest });
+    }
   }
 }
 
@@ -543,19 +547,22 @@ async function recordTrack ({ report = report$1, uri, file }) {
   });
 
   report('spotrip.track.convert.start');
-  await processEnded(
-    spawn$1('flac', [...FLAC_OPTIONS, `--output-name=${file}`, pcmFile])
-  );
+  await exec('flac', [...FLAC_OPTIONS, `--output-name=${file}`, pcmFile]);
   await unlink(pcmFile);
   report('spotrip.track.convert.done');
 
-  function onProgress (data) {
-    if (!data.current) {
-      report('spotrip.track.record.start', file);
-    } else if (data.done) {
-      report('spotrip.track.record.done', data);
+  function onProgress (update) {
+    const { done, speedo } = update;
+    if (!speedo) return report('spotrip.track.record.start', file)
+
+    const { taken, eta, percent, total, rate } = speedo;
+    if (done) {
+      report('spotrip.track.record.done', {
+        total: total / ONE_SECOND,
+        speed: rate / ONE_SECOND
+      });
     } else {
-      report('spotrip.track.record.update', data);
+      report('spotrip.track.record.update', { percent, taken, eta });
     }
   }
 }
@@ -564,40 +571,30 @@ async function captureTrackPCM ({ uri, file, onProgress }) {
   // send an initial progress marker
   onProgress({});
 
-  // get track length
+  // get data size
   const md = await getTrackMetadata(uri);
-  const speedo = new Speedo({ window: 60 });
-  speedo.total = 1 + md.duration / 1e3;
+  const speedo$1 = speedo({ total: (ONE_SECOND * (1 + md.duration)) / 1e3 });
 
-  // get stream
-  const dataStream = await getPlayStream(uri);
-
-  // progress
-  const progress$1 = progress({
-    progressInterval: 1000,
-    onProgress ({ bytes, done }) {
-      const current = bytes / ONE_SECOND;
-      speedo.update({ current });
-      if (done) speedo.total = current;
-      onProgress({
-        done,
-        current,
-        taken: speedo.taken(),
-        percent: speedo.percent(),
-        total: speedo.total,
-        eta: speedo.eta(),
-        speed: speedo.rate()
-      });
-    }
-  });
-
-  const fileStream = createWriteStream(file);
-
-  await pipeline(dataStream, progress$1, fileStream);
+  await pipeline(
+    await getPlayStream(uri),
+    speedo$1,
+    progressStream({ onProgress, speedo: speedo$1 }),
+    createWriteStream(file)
+  );
 
   const { streamed, error } = await getStatus();
   if (!streamed || error) {
     throw new Error(`Recording of ${uri} failed: ${error}`)
+  }
+}
+
+async function exists (file) {
+  try {
+    await stat(file);
+    return true
+  } catch (err) {
+    if (err.code === 'ENOENT') return false
+    throw err
   }
 }
 
@@ -608,7 +605,7 @@ async function recordAlbum$1 ({ report = report$1, path }) {
 
   for (const track of md.tracks) {
     const file = `${path}/${track.file}`;
-    if (!(await exists$1(file))) {
+    if (!(await exists(file))) {
       await recordTrack({ report, file, uri: track.trackUri });
     }
   }
@@ -679,13 +676,11 @@ async function recordAlbum (path) {
   return recordAlbum$1({ path })
 }
 
-const exec = promisify(execFile);
-
 async function readMetadata (path) {
   return JSON.parse(await readFile(`${path}/metadata.json`, 'utf8'))
 }
 
-const RSYNC_OPTIONS = ['--times', '--recursive', '--omit-dir-times'];
+const RSYNC_OPTIONS = ['--times', '--recursive', '--omit-dir-times', '--delete'];
 
 async function checkoutAlbum (path, { work: workPath }) {
   if (path.startsWith(workPath)) return path
@@ -715,16 +710,6 @@ async function publishAlbum (path, { store: storePath }) {
   await exec('rm', ['-rf', path]);
 
   report('publish.album.done', destPath);
-}
-
-async function exists (file) {
-  try {
-    await stat(file);
-    return true
-  } catch (err) {
-    if (err.code === 'ENOENT') return false
-    throw err
-  }
 }
 
 async function tagAlbum (path) {

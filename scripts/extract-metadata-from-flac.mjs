@@ -17,11 +17,10 @@ const TAGS = [
   'GENRE'
 ]
 
-main(process.argv.slice(2))
-  .catch(err => {
-    console.error(err)
-    process.exit(1)
-  })
+main(process.argv.slice(2)).catch(err => {
+  console.error(err)
+  process.exit(1)
+})
 
 async function main (flacFiles) {
   const md = {}
